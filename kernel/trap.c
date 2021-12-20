@@ -29,6 +29,24 @@ trapinithart(void)
   w_stvec((uint64)kernelvec);
 }
 
+static void
+handlealarm(void)
+{
+	uint xticks;
+	acquire(&tickslock);
+	xticks = ticks;
+	release(&tickslock);
+	
+	struct proc* p = myproc();
+
+	if(p->interval == 0 || xticks - p->lticks < p->interval || p->alarming)
+		return;
+	memmove(p->trapframe_alarm, p->trapframe, 512);
+	p->trapframe->epc = (uint64)p->afn;
+	p->lticks = xticks;
+	p->alarming = 1;
+	return;
+}
 //
 // handle an interrupt, exception, or system call from user space.
 // called from trampoline.S
@@ -78,7 +96,10 @@ usertrap(void)
 
   // give up the CPU if this is a timer interrupt.
   if(which_dev == 2)
-    yield();
+  {
+	  handlealarm();
+	  yield();
+  }
 
   usertrapret();
 }

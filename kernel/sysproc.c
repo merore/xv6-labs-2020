@@ -84,6 +84,44 @@ sys_kill(void)
   return kill(pid);
 }
 
+uint64
+sys_sigalarm(void)
+{
+	int interval;
+	uint64 fn;
+	uint lticks;
+	struct proc* p;
+
+
+	if (argint(0, &interval) < 0 || interval <= 0)
+		return -1;
+	if (argaddr(1, &fn) < 0)
+		return -1;
+	
+	acquire(&tickslock);
+	lticks = ticks;
+	release(&tickslock);
+	
+	p = myproc();
+
+	acquire(&p->lock);
+	p->interval = (uint)interval;
+	p->afn = (void*)fn;
+	p->lticks = lticks;
+	release(&p->lock);
+	return 0;
+}
+
+uint64
+sys_sigreturn(void)
+{
+	struct proc* p =  myproc();
+	uint64 tp = p->trapframe->tp;
+	memmove(p->trapframe, p->trapframe_alarm, 512);
+	p->trapframe->tp = tp;
+	return 0;
+}
+
 // return how many clock tick interrupts have occurred
 // since start.
 uint64
