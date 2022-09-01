@@ -29,6 +29,52 @@ trapinithart(void)
   w_stvec((uint64)kernelvec);
 }
 
+int
+cowcheck(pagetable_t pagetable, uint64 va)
+{
+  if(va > MAXVA)
+    return -1;
+  pte_t *pte = walk(pagetable, va, 0);
+  if(pte == 0)
+    return -1;
+  if((*pte & PTE_V) == 0)
+    return -1;
+  if((*pte & PTE_COW) == 0)
+    return -1;
+  return 0;
+}
+
+// cow 缺页处理，传入应用页表和虚拟地址，如果缺页处理成功，返回新建物理地址，其他情况返回 0。
+// 如果发生 cow 缺页，分配一个新的物理页，将 va 重新映射新的物理地址，PTE_W 置 1，PTE_COW 置 0。
+// 如果发生 cow 缺页，恰好该页引用为 1，直接 PTE_W 置 1，PTE_COW 置 0 即可。
+uint64
+cowcopy(pagetable_t pagetable, uint64 va)
+{
+  va = PGROUNDDOWN(va);
+  if(cowcheck(pagetable, va))
+    return 0;
+  pte_t *pte = walk(pagetable, va, 0);
+  void *pa = (void *)PTE2PA(*pte);
+
+  *pte = ((*pte) | (PTE_W)) & (~PTE_COW);
+  if(getmemref((void *)pa) == 1)
+    return (uint64)pa;
+  
+  void *npa = kalloc();
+  if ((uint64)npa == 0)
+    return 0;
+  memmove(npa, pa, PGSIZE);
+
+  // avoid remap panic
+  uint64 flags = PTE_FLAGS(*pte);
+  if(mappages(pagetable, va, PGSIZE, (uint64)npa, flags))
+  {
+    kfree(npa);
+    return 0;
+  }
+  kfree(pa);
+  return (uint64)npa; 
+}
 //
 // handle an interrupt, exception, or system call from user space.
 // called from trampoline.S
@@ -65,8 +111,13 @@ usertrap(void)
     intr_on();
 
     syscall();
+  } else if(r_scause() == 15) {
+    uint64 va = r_stval();
+    if(cowcopy(p->pagetable, va) == 0)
+      p->killed = 1;
   } else if((which_dev = devintr()) != 0){
     // ok
+	// TODO write fault
   } else {
     printf("usertrap(): unexpected scause %p pid=%d\n", r_scause(), p->pid);
     printf("            sepc=%p stval=%p\n", r_sepc(), r_stval());
