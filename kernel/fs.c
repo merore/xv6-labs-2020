@@ -451,53 +451,45 @@ bmap(struct inode *ip, uint bn)
   panic("bmap: out of range");
 }
 
+void itruncin(uint dev, uint addr, int level)
+{
+  int i;
+  struct buf *bp;
+  uint *a;
+  if(addr == 0)
+    return;
+  if(level == 0) {
+    bfree(dev, addr);
+    return;
+  }
+  bp = bread(dev, addr);
+  a = (uint*)bp->data;
+  for(i = 0; i < NINDIRECT; i++) {
+    itruncin(dev, a[i], level-1);
+  }
+  brelse(bp);
+}
 // Truncate inode (discard contents).
 // Caller must hold ip->lock.
 void
 itrunc(struct inode *ip)
 {
-  int i, j, k;
-  struct buf *bp, *bp2;
-  uint *a, *a2;
+  int i;
+  struct buf *bp;
 
-  for(i = 0; i < NDIRECT; i++){
-    if(ip->addrs[i]){
-      bfree(ip->dev, ip->addrs[i]);
-      ip->addrs[i] = 0;
-    }
+  for(i = 0; i < NDIRECT; i++) {
+    itruncin(ip->dev, ip->addrs[i], 0);
+    ip->addrs[i] = 0;
   }
 
-  if(ip->addrs[NDIRECT]){
-    bp = bread(ip->dev, ip->addrs[NDIRECT]);
-    a = (uint*)bp->data;
-    for(j = 0; j < NINDIRECT; j++){
-      if(a[j])
-        bfree(ip->dev, a[j]);
-    }
-    brelse(bp);
-    bfree(ip->dev, ip->addrs[NDIRECT]);
+  if(ip->addrs[NDIRECT]) {
+    itruncin(ip->dev, ip->addrs[NDIRECT], 1);
     ip->addrs[NDIRECT] = 0;
   }
 
-  if(ip->addrs[NDIRECT+1]){
-    bp = bread(ip->dev, ip->addrs[NDIRECT+1]);
-    a = (uint*)bp->data;
-    for(j = 0; j < NINDIRECT; j++) {
-      if(a[j]) {
-        bp2 = bread(ip->dev, a[j]);
-        a2 = (uint*)bp2->data;
-        for (k = 0; k < NINDIRECT; k++) {
-          if(a2[k])
-            bfree(ip->dev, a2[k]);
-        }
-        brelse(bp2);
-        bfree(ip->dev, a[j]);
-        a[j] = 0;
-      }
-    }
-    brelse(bp);
-    bfree(ip->dev, ip->addrs[NDIRECT]);
-    ip->addrs[NDIRECT] = 0;
+  if(ip->addrs[NDIRECT+1]) {
+    itruncin(ip->dev, ip->addrs[NDIRECT+1], 2);
+    ip->addrs[NDIRECT+1] = 0;
   }
 
   ip->size = 0;
