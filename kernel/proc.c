@@ -5,6 +5,7 @@
 #include "spinlock.h"
 #include "proc.h"
 #include "defs.h"
+#include "mmap.h"
 
 struct cpu cpus[NCPU];
 
@@ -294,6 +295,9 @@ fork(void)
   for(i = 0; i < NOFILE; i++)
     if(p->ofile[i])
       np->ofile[i] = filedup(p->ofile[i]);
+  for(i = 0; i < NOMMAP; i++)
+    if(p->mmap[i])
+      np->mmap[i] = mmapdup(p->mmap[i]);
   np->cwd = idup(p->cwd);
 
   safestrcpy(np->name, p->name, sizeof(p->name));
@@ -343,6 +347,14 @@ exit(int status)
 
   if(p == initproc)
     panic("init exiting");
+
+  for(int i = 0; i < NOMMAP; i++){
+    if(p->mmap[i]){
+      struct mmap *m = p->mmap[i];
+      mmapclose(m, m->begin, m->end);
+      p->mmap[i] = 0;
+    }
+  }
 
   // Close all open files.
   for(int fd = 0; fd < NOFILE; fd++){

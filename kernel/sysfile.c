@@ -15,6 +15,7 @@
 #include "sleeplock.h"
 #include "file.h"
 #include "fcntl.h"
+#include "mmap.h"
 
 // Fetch the nth word-sized system call argument as a file descriptor
 // and return both the descriptor and the corresponding struct file.
@@ -482,5 +483,84 @@ sys_pipe(void)
     fileclose(wf);
     return -1;
   }
+  return 0;
+}
+
+uint64 sys_mmap(void)
+{
+  uint64 addr;
+  int i, length, prot, flags, fd, offset;
+  struct mmap *m;
+  struct file *f;
+  struct proc *p = myproc();
+
+  if(argaddr(0, &addr) < 0 ||
+      argint(1, &length) < 0 ||
+      argint(2, &prot) < 0 ||
+      argint(3, &flags) < 0 ||
+      argint(4, &fd) < 0 ||
+      argint(5, &offset) < 0)
+    return -1;
+
+  f = p->ofile[fd];
+
+  if((flags & MAP_SHARED) && prot & PROT_WRITE && !f->writable)
+    return -1;
+  // assume addr is zero
+  if(p->sz + length > MAXVA)
+    return -1;
+  if((m = mmapalloc()) == 0)
+    return -1;
+
+  m->addr = p->sz;
+  m->begin = p->sz;
+  m->end = PGROUNDUP(m->begin+length);
+  m->file = p->ofile[fd];
+  m->prot = prot;
+  m->flags = flags;
+  m->offset = offset;
+  // file proc's mmap
+  for(i = 0; i<NOMMAP; i++) {
+    if(p->mmap[i] == 0) {
+      p->mmap[i] = m;
+      break;
+    }
+  }
+  // proc's mmap have no space
+  if(i==NOMMAP) {
+    return -1;
+  }
+  p->sz = m->end;
+  // reference add 1
+  filedup(p->ofile[fd]);
+  return m->addr;
+}
+
+// munmap(addr, length)
+uint64 sys_munmap(void)
+{
+  uint64 addr;
+  int length, i;
+  uint64 begin, end;
+  struct mmap *m;
+  struct proc *p = myproc();
+
+  if(argaddr(0, &addr) < 0 || argint(1, &length) < 0)
+    return -1;
+
+  begin = PGROUNDDOWN(addr);
+  end = PGROUNDUP(addr+length);
+
+  // 如果起至地址都没有在映射状态，直接返回
+  if ((m = getmmap(begin)) == 0 && (m = getmmap(end)) == 0)
+    return 0;
+
+  // 约束起至地址到 maped area 中
+  begin = begin < m->begin ? begin:m->begin;
+  end = end < m->end ? end:m->end;
+
+  mmapclose(m, begin, end);
+  if(m->addr == 0)
+    p->mmap[i] = 0;
   return 0;
 }
